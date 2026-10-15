@@ -3,6 +3,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import Nav from "@/components/Nav";
 import AppPopups from "@/components/AppPopups";
 import InstallApp from "@/components/InstallApp";
+import AppLock from "@/components/AppLock";
 
 const font = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -29,6 +30,7 @@ export default function RootLayout({ children }) {
         <main className="container">{children}</main>
         <AppPopups />
         <InstallApp />
+        <AppLock />
       </body>
     </html>
   );
