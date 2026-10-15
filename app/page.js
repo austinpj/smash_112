@@ -48,7 +48,11 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1>Hi{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}</h1>
+      <div className="row between" style={{ alignItems: "flex-start" }}>
+        <h1>Hi{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""}</h1>
+        <button className="btn secondary sm" style={{ marginTop: 14 }}
+          onClick={() => window.dispatchEvent(new Event("smash:weekly"))}>📊 Weekly report</button>
+      </div>
 
       {profileIncomplete && (
         <div className="card">

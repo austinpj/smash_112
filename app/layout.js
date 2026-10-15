@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import Nav from "@/components/Nav";
+import AppPopups from "@/components/AppPopups";
 
 const font = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -25,6 +26,7 @@ export default function RootLayout({ children }) {
       <body>
         <Nav />
         <main className="container">{children}</main>
+        <AppPopups />
       </body>
     </html>
   );
