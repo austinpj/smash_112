@@ -75,7 +75,7 @@ export default function Food() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Analysis failed");
       if (!json.items.length) throw new Error("No food found in the photo. You can add items manually below.");
-      setItems(json.items);
+      setItems(json.items.map((it) => (it.grams > 0 ? { ...it, per_g: perGram(it, it.grams) } : it)));
       setNotes(json.notes);
       setSource("ai");
     } catch (e) {
@@ -86,12 +86,34 @@ export default function Food() {
     }
   }
 
-  const upd = (i, k, v) => setItems(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
+  // Nutrition per gram for each item, so changing grams rescales everything automatically.
+  const NUTR = ["calories", "protein_g", "carbs_g", "fat_g"];
+  const perGram = (it, g) => Object.fromEntries(NUTR.map((n) => [n, (Number(it[n]) || 0) / g]));
+  const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
+
+  function upd(i, k, v) {
+    setItems(items.map((it, j) => {
+      if (j !== i) return it;
+      const next = { ...it, [k]: v };
+      const g = Number(it.grams);
+      if (k === "grams") {
+        const base = it.per_g || (g > 0 ? perGram(it, g) : null);
+        const ng = Number(v);
+        if (base && ng > 0) {
+          NUTR.forEach((n) => { next[n] = round(base[n] * ng, n === "calories" ? 0 : 1); });
+          next.per_g = base;
+        }
+      } else if (NUTR.includes(k) && g > 0) {
+        next.per_g = perGram(next, g); // you corrected a value — remember the new ratio
+      }
+      return next;
+    }));
+  }
   const sum = (arr, k) => arr.reduce((s, x) => s + Number(x[k] || 0), 0);
 
   async function save() {
     setErr("");
-    const valid = items.filter((i) => i.name && i.calories !== "");
+    const valid = items.filter((i) => i.name && i.calories !== "").map(({ per_g, ...rest }) => rest);
     if (!valid.length) return setErr("Add at least one item with a name and calories.");
     const { error } = await supabase.from("food_logs").insert({
       eaten_on: day,
@@ -177,7 +199,7 @@ export default function Food() {
             </>
           )}
         </div>
-        <p className="muted small">AI numbers are estimates — check portion sizes and edit before saving.</p>
+        <p className="muted small">Change the <b>grams</b> and calories, protein, carbs &amp; fat update automatically. AI numbers are estimates — check portion sizes before saving.</p>
       </div>
 
       <div className="card table-wrap">
