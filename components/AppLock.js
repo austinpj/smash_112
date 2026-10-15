@@ -8,6 +8,7 @@ const LOCK_AFTER_MS = 30 * 60 * 1000; // lock after 30 minutes without use
 const MAX_TRIES = 5;                   // wrong PINs before signing out
 const ACTIVE_KEY = "smash-last-active";
 const TRIES_KEY = "smash-lock-tries";
+const SESSION_KEY = "smash-unlocked"; // remembered only until the app/tab is closed
 const cfgKey = (uid) => `smash-lock-${uid}`;
 
 // ───────────── Small helpers ─────────────
@@ -24,6 +25,13 @@ function writeLock(uid, cfg) {
   window.dispatchEvent(new Event("smash:lock-changed"));
 }
 const markActive = () => ls.set(ACTIVE_KEY, String(Date.now()));
+// sessionStorage is wiped when the app is closed (swiped away) or the tab is closed,
+// so a fresh open of Smash always starts locked.
+const ss = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} },
+};
+const markUnlocked = () => { ss.set(SESSION_KEY, "1"); markActive(); };
 
 // The PIN is never stored — only a scrambled fingerprint (hash) of it.
 async function hashPin(uid, pin) {
@@ -151,11 +159,12 @@ export default function AppLock() {
   const check = useCallback(() => {
     if (!enabled) return;
     const last = Number(ls.get(ACTIVE_KEY) || 0);
-    if (!last || Date.now() - last > LOCK_AFTER_MS) setLocked(true);
+    const freshOpen = !ss.get(SESSION_KEY);
+    if (freshOpen || !last || Date.now() - last > LOCK_AFTER_MS) setLocked(true);
   }, [enabled]);
 
   useEffect(() => {
-    if (onLoginPage) { markActive(); return; } // signing in with a password counts as unlocking
+    if (onLoginPage) { markUnlocked(); return; } // signing in with a password counts as unlocking
     if (!enabled) return;
     check();
     let lastWrite = 0;
@@ -163,7 +172,7 @@ export default function AppLock() {
       if (locked) return;
       const n = Date.now();
       const last = Number(ls.get(ACTIVE_KEY) || 0);
-      if (!last || n - last > LOCK_AFTER_MS) return setLocked(true); // came back after 30+ min
+      if (!ss.get(SESSION_KEY) || !last || n - last > LOCK_AFTER_MS) return setLocked(true); // fresh open, or back after 30+ min
       if (n - lastWrite > 15000) { lastWrite = n; markActive(); }
     };
     const onVisible = () => { if (document.visibilityState === "visible") check(); };
@@ -187,7 +196,7 @@ export default function AppLock() {
 
   function unlock() {
     ls.del(TRIES_KEY);
-    markActive();
+    markUnlocked();
     setLocked(false); setPin(""); setErr("");
   }
 
@@ -283,7 +292,7 @@ export function AppLockSettings() {
     if (p2 !== p1) { setErr("PINs don't match — try again."); setP1(""); setP2(""); return setStep("new1"); }
     const pinHash = await hashPin(uid, p1);
     writeLock(uid, { pinHash, credId: cfg?.credId || null });
-    markActive();
+    markUnlocked();
     setMsg("App Lock is on.");
     if (bioOk && !cfg?.credId) { setP1(""); setP2(""); setErr(""); return setStep("offerBio"); }
     reset();
@@ -321,7 +330,7 @@ export function AppLockSettings() {
         <span className="pill" style={cfg ? {} : { background: "rgba(255,255,255,.06)", color: "var(--muted)" }}>{cfg ? "On" : "Off"}</span>
       </div>
       <p className="muted small">
-        Asks for your PIN{bioOk ? " or fingerprint / face" : ""} when Smash hasn’t been used for 30 minutes.
+        Asks for your PIN{bioOk ? " or fingerprint / face" : ""} every time Smash is opened fresh, and when it hasn’t been used for 30 minutes.
         Works on this phone or computer only.
       </p>
 
