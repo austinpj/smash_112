@@ -48,20 +48,27 @@ export async function POST(request) {
     });
 
   let res, lastStatus = 0, lastDetail = "";
-  for (const model of models) {
-    res = await call(model, true);
-    if (res.status === 400) res = await call(model, false); // model may not support the speed setting
-    if (res.ok) break;
-    lastStatus = res.status;
-    lastDetail = await res.text();
-    console.error("Gemini error", model, res.status, lastDetail.slice(0, 300));
-    if (res.status !== 404 && res.status !== 400) break; // only move on when the model isn't available
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Two rounds: if every model is busy, wait a moment and try once more.
+  outer: for (let round = 0; round < 2; round++) {
+    if (round === 1) await sleep(1500);
+    for (const model of models) {
+      res = await call(model, true);
+      if (res.status === 400) res = await call(model, false); // model may not support the speed setting
+      if (res.ok) break outer;
+      lastStatus = res.status;
+      lastDetail = await res.text();
+      console.error("Gemini error", model, res.status, lastDetail.slice(0, 300));
+      if (res.status === 401 || res.status === 403) break outer; // bad key — no point retrying
+      // 404 = model retired, 429 = that model's free limit used, 500/503 = busy → try the next model
+    }
   }
 
   if (!res.ok) {
     let msg = `AI service error (${lastStatus}).`;
     if (lastStatus === 400 || lastStatus === 403) msg += " Check that GEMINI_API_KEY in Vercel is correct.";
     else if (lastStatus === 429) msg += " Daily free limit reached — try again later.";
+    else if (lastStatus === 503 || lastStatus === 500) msg = "Google's AI is very busy right now. Please try again in a minute.";
     else msg += " Try again in a moment.";
     return NextResponse.json({ error: msg }, { status: 502 });
   }
