@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+// Tried in order. If Google retires one (404), the next is used automatically.
+const MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-3-flash-preview"];
 
 const PROMPT = `You are a nutrition assistant. Look at this photo of food and estimate its nutrition.
-The user is in Kerala, India, so consider South Indian / Kerala dishes (rice, appam, puttu, dosa, idli,
+The user is in Kerala, India, so consider South Indian / Kerala dishes (rice, chapati, appam, puttu, dosa, idli,
 sambar, avial, thoran, fish curry, beef fry, parotta, etc.) as well as any other cuisine.
 Identify each distinct food item, estimate the portion in grams as served, and estimate calories,
 protein, carbohydrates and fat for that portion. If something is unclear, make your best reasonable guess
@@ -30,27 +33,41 @@ export async function POST(request) {
   const [, mimeType, data] = match;
   if (data.length > 4_000_000) return NextResponse.json({ error: "Image is too large." }, { status: 413 });
 
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
+  const models = [process.env.GEMINI_MODEL, ...MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
+  const call = (model, fast) =>
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mimeType, data } }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+        generationConfig: {
+          responseMimeType: "application/json",
+          ...(fast ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+        },
       }),
-    }
-  );
+    });
+
+  let res, lastStatus = 0, lastDetail = "";
+  for (const model of models) {
+    res = await call(model, true);
+    if (res.status === 400) res = await call(model, false); // model may not support the speed setting
+    if (res.ok) break;
+    lastStatus = res.status;
+    lastDetail = await res.text();
+    console.error("Gemini error", model, res.status, lastDetail.slice(0, 300));
+    if (res.status !== 404 && res.status !== 400) break; // only move on when the model isn't available
+  }
 
   if (!res.ok) {
-    const detail = await res.text();
-    console.error("Gemini error", res.status, detail);
-    return NextResponse.json({ error: `AI service error (${res.status}). Try again in a moment.` }, { status: 502 });
+    let msg = `AI service error (${lastStatus}).`;
+    if (lastStatus === 400 || lastStatus === 403) msg += " Check that GEMINI_API_KEY in Vercel is correct.";
+    else if (lastStatus === 429) msg += " Daily free limit reached — try again later.";
+    else msg += " Try again in a moment.";
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
 
   const json = await res.json();
-  const text = json?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+  const text = json?.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text || "").join("") || "";
   try {
     const parsed = JSON.parse(text.replace(/^```(json)?|```$/g, "").trim());
     const items = (parsed.items || []).map((i) => ({
