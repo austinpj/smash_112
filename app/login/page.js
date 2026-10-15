@@ -41,14 +41,28 @@ export default function LoginPage() {
     }
   }
 
+  function switchTo(m) {
+    setMode(m); setErr(""); setMsg("");
+  }
+
   return (
-    <div style={{ maxWidth: 380, margin: "48px auto" }}>
-      <h1 style={{ textAlign: "center" }}>Smash</h1>
-      <p className="muted" style={{ textAlign: "center" }}>Log workouts, food and progress.</p>
+    <div className="auth">
+      <div className="auth-inner">
+        <h1 className="auth-logo">SMASH</h1>
+        <p className="auth-tag">Lift. Log. Level up.</p>
+        <div className="chips">
+          <span>🏋️ 100+ exercises</span>
+          <span>📸 Food photo AI</span>
+          <span>📈 Progress & PRs</span>
+        </div>
       <form className="card" onSubmit={submit}>
-        <h2>{mode === "signin" ? "Sign in" : "Create account"}</h2>
+        <div className="segmented">
+          <span className={"knob" + (mode === "signup" ? " right" : "")} />
+          <button type="button" className={mode === "signin" ? "on" : ""} onClick={() => switchTo("signin")}>Sign in</button>
+          <button type="button" className={mode === "signup" ? "on" : ""} onClick={() => switchTo("signup")}>Create account</button>
+        </div>
         {mode === "signup" && (
-          <div className="field">
+          <div className="field slide-in">
             <label>Name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </div>
@@ -67,13 +81,11 @@ export default function LoginPage() {
         <button className="btn" style={{ width: "100%" }} disabled={busy}>
           {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
         </button>
-        <p className="muted" style={{ textAlign: "center", marginBottom: 0 }}>
-          {mode === "signin" ? "New here? " : "Already have an account? "}
-          <a href="#" onClick={(e) => { e.preventDefault(); setMode(mode === "signin" ? "signup" : "signin"); setErr(""); setMsg(""); }}>
-            {mode === "signin" ? "Create an account" : "Sign in"}
-          </a>
+        <p className="muted small" style={{ textAlign: "center", marginBottom: 0 }}>
+          Your data is private to your account.
         </p>
       </form>
+      </div>
     </div>
   );
 }
