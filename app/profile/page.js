@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ACTIVITY_LEVELS, GOALS, bodyStats, fmt, todayISO } from "@/lib/calc";
+import { AppLockSettings } from "@/components/AppLock";
 
 export default function Profile() {
   const supabase = useMemo(() => createClient(), []);
@@ -116,6 +117,7 @@ export default function Profile() {
           </div>
         )}
       </form>
+        <AppLockSettings />
     </>
   );
 }
