@@ -15,9 +15,6 @@ export const metadata = {
   description: "Lift. Log. Level up. Track workouts, food and progress.",
 };
 
-// Every page shows per-user data, so render on request rather than at build time.
-export const dynamic = "force-dynamic";
-
 export const viewport = { width: "device-width", initialScale: 1, themeColor: "#07080c" };
 
 export default function RootLayout({ children }) {
