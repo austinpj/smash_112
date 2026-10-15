@@ -5,6 +5,23 @@ import { createClient } from "@/lib/supabase/client";
 import { e1rm, setCalories, fmt, todayISO } from "@/lib/calc";
 
 const emptySet = () => ({ reps: "", weight_kg: "", minutes: "", distance_km: "" });
+const DRAFT_KEY = "smash-workout-draft";
+const DRAFT_CSS = `
+.draft-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin: -6px 0 16px;
+  border-radius: 14px; border: 1px solid rgba(198,255,61,.25);
+  background: rgba(198,255,61,.07); color: var(--text); font-size: .9rem;
+}
+.draft-bar > span:nth-child(2) { flex: 1; }
+.draft-bar.resume { margin-top: 0; }
+.draft-bar.resume:hover { opacity: 1; border-color: var(--accent); }
+.draft-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+.new-ex { margin-top: 12px; padding: 14px; border-radius: 14px; border: 1px dashed rgba(198,255,61,.3); animation: rise .3s var(--ease) both; }
+`;
+
+const GROUPS = ["Chest","Back","Shoulders","Biceps","Triceps","Forearms","Legs","Quads","Hamstrings","Glutes","Calves","Core","Full body","Cardio","Flexibility"];
 
 export default function NewWorkout() {
   const router = useRouter();
@@ -21,6 +38,59 @@ export default function NewWorkout() {
   const [picked, setPicked] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [userId, setUserId] = useState(null);
+  const [draftReady, setDraftReady] = useState(false); // don't overwrite the saved draft before it's loaded
+  const [resumed, setResumed] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [showNewEx, setShowNewEx] = useState(false);
+  const [newEx, setNewEx] = useState({ name: "", muscle_group: "Chest", equipment: "", category: "strength" });
+
+  // ── Load any workout-in-progress saved on this device ──
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const uid = data.session?.user?.id || null;
+      setUserId(uid);
+      try {
+        const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+        if (d && d.userId === uid && d.entries?.length) {
+          setTitle(d.title || ""); setDate(d.date || todayISO()); setDuration(d.duration || "");
+          setNotes(d.notes || ""); setEntries(d.entries); setResumed(true); setSavedAt(d.savedAt);
+        }
+      } catch {}
+      setDraftReady(true);
+    })();
+  }, [supabase]);
+
+  // ── Auto-save on every change ──
+  useEffect(() => {
+    if (!draftReady) return;
+    try {
+      if (entries.length === 0 && !title && !notes) { localStorage.removeItem(DRAFT_KEY); return; }
+      const now = Date.now();
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ userId, title, date, duration, notes, entries, savedAt: now }));
+      setSavedAt(now);
+    } catch {}
+  }, [draftReady, userId, title, date, duration, notes, entries]);
+
+  function discardDraft() {
+    if (!window.confirm("Discard this workout in progress?")) return;
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
+    setEntries([]); setTitle(""); setNotes(""); setDuration(""); setDate(todayISO()); setResumed(false);
+  }
+
+  async function createExercise(e) {
+    e.preventDefault();
+    if (!newEx.name.trim()) return;
+    const met = newEx.category === "cardio" ? 6 : 5;
+    const { data, error } = await supabase.from("exercises")
+      .insert({ ...newEx, name: newEx.name.trim(), met, user_id: userId }).select().single();
+    if (error) return setErr(error.message);
+    setExercises([...exercises, data].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group) || a.name.localeCompare(b.name)));
+    setEntries([...entries, { exercise: data, sets: [emptySet()], last: null }]);
+    setNewEx({ ...newEx, name: "", equipment: "" });
+    setShowNewEx(false);
+  }
 
   useEffect(() => {
     (async () => {
@@ -117,6 +187,7 @@ export default function NewWorkout() {
         const { error: e2 } = await supabase.from("workout_sets").insert(rows);
         if (e2) throw e2;
       }
+      try { localStorage.removeItem(DRAFT_KEY); } catch {}
       router.push(`/workouts/${workout.id}`);
     } catch (e) {
       setErr(e.message);
@@ -126,7 +197,19 @@ export default function NewWorkout() {
 
   return (
     <>
+      <style>{DRAFT_CSS}</style>
       <h1>Log a workout</h1>
+      {(entries.length > 0 || title) && (
+        <div className="draft-bar">
+          <span className="draft-dot" />
+          <span>
+            {resumed ? "Workout in progress restored · " : ""}Auto-saved
+            {savedAt ? ` at ${new Date(savedAt).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}` : ""}
+            <span className="muted small"> — safe to refresh or switch tabs</span>
+          </span>
+          <button className="btn danger sm" onClick={discardDraft}>Discard</button>
+        </div>
+      )}
       <div className="card">
         <div className="grid">
           <div className="field">
@@ -167,6 +250,35 @@ export default function NewWorkout() {
           </select>
           <button className="btn" onClick={addExercise} disabled={!picked}>Add</button>
         </div>
+        {!showNewEx ? (
+          <p className="muted small" style={{ marginBottom: 0 }}>
+            Can’t find it?{" "}
+            <a href="#" onClick={(e) => { e.preventDefault(); setShowNewEx(true); setNewEx({ ...newEx, name: search }); }}>
+              + Create a new exercise here
+            </a>
+          </p>
+        ) : (
+          <form onSubmit={createExercise} className="new-ex">
+            <div className="grid">
+              <div className="field"><label>Exercise name</label>
+                <input autoFocus required value={newEx.name} onChange={(e) => setNewEx({ ...newEx, name: e.target.value })} /></div>
+              <div className="field"><label>Muscle group</label>
+                <select value={newEx.muscle_group} onChange={(e) => setNewEx({ ...newEx, muscle_group: e.target.value })}>
+                  {GROUPS.map((g) => <option key={g}>{g}</option>)}
+                </select></div>
+              <div className="field"><label>Type</label>
+                <select value={newEx.category} onChange={(e) => setNewEx({ ...newEx, category: e.target.value })}>
+                  <option value="strength">Strength (reps × kg)</option>
+                  <option value="bodyweight">Bodyweight (reps)</option>
+                  <option value="cardio">Cardio (minutes / km)</option>
+                </select></div>
+            </div>
+            <div className="row">
+              <button className="btn sm">Create &amp; add to workout</button>
+              <button type="button" className="btn secondary sm" onClick={() => setShowNewEx(false)}>Cancel</button>
+            </div>
+          </form>
+        )}
       </div>
 
       {entries.map((e, i) => {
