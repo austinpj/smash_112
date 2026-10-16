@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ACTIVITY_LEVELS, GOALS, bodyStats, e1rm, fmt, stepStats, STEP_GOAL } from "@/lib/calc";
@@ -20,13 +20,26 @@ export default function AppPopups() {
   const [profile, setProfile] = useState(null);
   const [weight, setWeight] = useState(null);
   const [show, setShow] = useState(null); // "onboarding" | "weekly" | null
+  const checkedFor = useRef(null); // which signed-in user we've already checked
 
+  // Let the Home page open the weekly report on demand
   useEffect(() => {
-    if (pathname.startsWith("/login")) return;
+    const open = () => setShow("weekly");
+    window.addEventListener("smash:weekly", open);
+    return () => window.removeEventListener("smash:weekly", open);
+  }, []);
+
+  // Runs on every page change, so it also works straight after signing up or signing in
+  // (the app moves to the next page without a full reload).
+  useEffect(() => {
+    if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return;
     (async () => {
       const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
+      if (!user || checkedFor.current === user.id) return;
+      checkedFor.current = user.id;
+
       const [{ data: p }, { data: w }] = await Promise.all([
         supabase.from("profiles").select("*").maybeSingle(),
         supabase.from("body_logs").select("weight_kg").order("logged_on", { ascending: false }).limit(1),
@@ -43,19 +56,12 @@ export default function AppPopups() {
       if (!(p && "last_weekly_report" in p)) { try { seen = localStorage.getItem(LS_KEY); } catch {} }
       if (!seen || seen < sunday) setShow("weekly");
     })();
-    // Let the Home page open the report on demand
-    const open = () => setShow("weekly");
-    window.addEventListener("smash:weekly", open);
-    return () => window.removeEventListener("smash:weekly", open);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pathname]);
 
-  if (pathname.startsWith("/login") || !show) return null;
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth") || !show) return null;
   if (show === "onboarding") return <Onboarding profile={profile} weight={weight} />;
   return <WeeklyReport profile={profile} onClose={() => setShow(null)} />;
-}
-
-// ═════════════════════════ Onboarding wizard ═════════════════════════
+}// ═════════════════════════ Onboarding wizard ═════════════════════════
 function Onboarding({ profile, weight }) {
   const [step, setStep] = useState(0);
   const [f, setF] = useState({
