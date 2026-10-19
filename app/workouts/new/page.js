@@ -410,4 +410,22 @@ function RepeatCard({ recent, onPick }) {
         Pick one you did recently — its exercises load in the same order with the same number of sets. Just fill in today’s reps and weights.
       </p>
       {suggested && (
-        <button className="repeat
+        <button className="repeat-suggest" onClick={() => onPick(suggested)}>
+          <span className="muted small">Today is {todayName} · last {todayName} you did</span>
+          <b>{label(suggested)}</b>
+          <span className="muted small">{count(suggested)} exercises · {suggested.workout_sets.length} sets — tap to load</span>
+        </button>
+      )}
+      <div className="repeat-list">
+        {recent.filter((w) => w !== suggested).map((w) => (
+          <button key={w.id} className="repeat-chip" onClick={() => onPick(w)}>
+            <span className="pill">{DAY(w.performed_on)}</span>
+            <span className="rc-title">{label(w)}</span>
+            <span className="muted small">{SHORT(w.performed_on)} · {count(w)} ex</span>
+          </button>
+        ))}
+      </div>
+      <p className="muted small" style={{ marginBottom: 0 }}>Doing something different today? Skip this and add exercises below.</p>
+    </div>
+  );
+}
