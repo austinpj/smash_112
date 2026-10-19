@@ -7,6 +7,7 @@ import { e1rm, setCalories, fmt, todayISO } from "@/lib/calc";
 const emptySet = () => ({ reps: "", weight_kg: "", minutes: "", distance_km: "" });
 const DRAFT_KEY = "smash-workout-draft";
 const DRAFT_CSS = `
+/* ───────────── Auto-saved workout bar ───────────── */
 .draft-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 10px 14px; margin: -6px 0 16px;
@@ -18,6 +19,21 @@ const DRAFT_CSS = `
 .draft-bar.resume:hover { opacity: 1; border-color: var(--accent); }
 .draft-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+.repeat-suggest {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left;
+  padding: 14px 16px; margin-bottom: 12px; border-radius: 14px; cursor: pointer; font: inherit; color: var(--text);
+  border: 1.5px solid var(--accent); background: rgba(198,255,61,.08); box-shadow: 0 0 24px -12px rgba(198,255,61,.7);
+  transition: transform .2s;
+}
+.repeat-suggest b { font-size: 1.1rem; }
+.repeat-suggest:hover { transform: translateY(-2px); }
+.repeat-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); margin-bottom: 10px; }
+.repeat-chip {
+  display: flex; align-items: center; gap: 8px; text-align: left; padding: 10px 12px; border-radius: 12px; cursor: pointer;
+  font: inherit; color: var(--text); border: 1px solid var(--line); background: rgba(255,255,255,.03); transition: border-color .2s, transform .2s;
+}
+.repeat-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+.repeat-chip .rc-title { flex: 1; font-weight: 650; font-size: .9rem; }
 .new-ex { margin-top: 12px; padding: 14px; border-radius: 14px; border: 1px dashed rgba(198,255,61,.3); animation: rise .3s var(--ease) both; }
 `;
 
@@ -44,6 +60,7 @@ export default function NewWorkout() {
   const [savedAt, setSavedAt] = useState(null);
   const [showNewEx, setShowNewEx] = useState(false);
   const [newEx, setNewEx] = useState({ name: "", muscle_group: "Chest", equipment: "", category: "strength" });
+  const [recent, setRecent] = useState([]); // workouts from the last 2 weeks, for "Repeat a workout"
 
   // ── Load any workout-in-progress saved on this device ──
   useEffect(() => {
@@ -100,8 +117,37 @@ export default function NewWorkout() {
       ]);
       setExercises(ex || []);
       setWeight(w?.[0]?.weight_kg ? Number(w[0].weight_kg) : null);
+
+      const since = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10);
+      const { data: rw } = await supabase
+        .from("workouts")
+        .select("id, title, performed_on, workout_sets(set_number, reps, weight_kg, duration_sec, distance_km, created_at, exercise_id, exercises(*))")
+        .gte("performed_on", since)
+        .order("performed_on", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(14);
+      setRecent((rw || []).filter((x) => x.workout_sets?.length));
     })();
   }, [supabase]);
+
+  // Load a previous workout: same exercises, same order, same number of sets (boxes left empty to fill in)
+  function repeatWorkout(w) {
+    const sets = [...w.workout_sets].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.set_number - b.set_number);
+    const groups = [];
+    sets.forEach((st) => {
+      if (!st.exercises) return;
+      let g = groups.find((x) => x.exercise.id === st.exercise_id);
+      if (!g) groups.push((g = { exercise: st.exercises, prev: [] }));
+      g.prev.push(st);
+    });
+    setEntries(groups.map((g) => ({
+      exercise: g.exercise,
+      last: { date: w.performed_on, sets: g.prev },
+      sets: g.prev.map(() => emptySet()), // same number of sets, empty boxes to fill in today
+    })));
+    setTitle(w.title || "");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const groups = ["All", ...Array.from(new Set(exercises.map((e) => e.muscle_group)))];
   const filtered = exercises.filter(
@@ -134,8 +180,7 @@ export default function NewWorkout() {
     setEntries(next);
   }
   function addSet(i) {
-    const prevSet = entries[i].sets[entries[i].sets.length - 1];
-    setEntries(entries.map((e, ei) => (ei !== i ? e : { ...e, sets: [...e.sets, { ...prevSet }] })));
+    setEntries(entries.map((e, ei) => (ei !== i ? e : { ...e, sets: [...e.sets, emptySet()] })));
   }
   function removeSet(i, j) {
     setEntries(entries.map((e, ei) => (ei !== i ? e : { ...e, sets: e.sets.filter((_, sj) => sj !== j) })));
@@ -226,6 +271,8 @@ export default function NewWorkout() {
           </div>
         </div>
       </div>
+
+      {entries.length === 0 && recent.length > 0 && <RepeatCard recent={recent} onPick={repeatWorkout} />}
 
       <div className="card">
         <h2>Add exercise</h2>
@@ -343,3 +390,24 @@ export default function NewWorkout() {
     </>
   );
 }
+
+// ───────────── "Repeat a workout" card ─────────────
+const DAY = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short" });
+const DAY_LONG = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { weekday: "long" });
+const SHORT = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+
+function RepeatCard({ recent, onPick }) {
+  const todayName = new Date().toLocaleDateString("en-IN", { weekday: "long" });
+  // Same weekday as today, most recent first (e.g. last Monday's workout on a Monday)
+  const suggested = recent.find((w) => DAY_LONG(w.performed_on) === todayName && w.performed_on !== todayISO());
+  const label = (w) => w.title || "Workout";
+  const count = (w) => new Set(w.workout_sets.map((s) => s.exercise_id)).size;
+
+  return (
+    <div className="card">
+      <h2>🔁 Repeat a workout</h2>
+      <p className="muted small" style={{ marginTop: -6 }}>
+        Pick one you did recently — its exercises load in the same order with the same number of sets. Just fill in today’s reps and weights.
+      </p>
+      {suggested && (
+        <button className="repeat
