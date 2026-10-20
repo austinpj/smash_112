@@ -11,15 +11,18 @@ const I = {
   food: <path d="M7 3v8a2 2 0 0 1-4 0V3M5 11v10M17 3c-2 0-3 3-3 6s1 4 3 4v8" />,
   list: <path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01" />,
   user: <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-8 9a8 8 0 0 1 16 0" />,
+  drop: <path d="M12 2.7S5 10.3 5 15a7 7 0 0 0 14 0c0-4.7-7-12.3-7-12.3z" />,
 };
 
+// [link, label, icon, short label for the phone tab bar]
 const LINKS = [
-  ["/", "Home", "home"],
-  ["/workouts", "Workouts", "dumbbell"],
-  ["/progress", "Progress", "chart"],
-  ["/food", "Food", "food"],
-  ["/exercises", "Exercises", "list"],
-  ["/profile", "Profile", "user"],
+  ["/", "Home", "home", "Home"],
+  ["/workouts", "Workouts", "dumbbell", "Gym"],
+  ["/progress", "Progress", "chart", "Progress"],
+  ["/food", "Food", "food", "Food"],
+  ["/water", "Water", "drop", "Water"],
+  ["/exercises", "Exercises", "list", "Library"],
+  ["/profile", "Profile", "user", "Me"],
 ];
 
 function Icon({ name }) {
@@ -52,10 +55,10 @@ function Tabs({ className, pathname }) {
   return (
     <div className={className} ref={wrap}>
       <span className="tab-indicator" style={style} />
-      {LINKS.map(([href, label, icon], i) => (
+      {LINKS.map(([href, label, icon, short], i) => (
         <Link key={href} href={href} className={"tab" + (i === activeIndex ? " active" : "")}>
           <Icon name={icon} />
-          <span>{label}</span>
+          <span>{className === "bottom-tabs" ? short : label}</span>
         </Link>
       ))}
     </div>
