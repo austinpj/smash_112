@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { bodyStats, fmt, todayISO } from "@/lib/calc";
-import { FOOD_GROUPS, ALL_FOODS, portionItem } from "@/lib/foods";
+import FoodPicker from "@/components/FoodPicker";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snack", "other"];
 const blankItem = () => ({ name: "", grams: "", calories: "", protein_g: "", carbs_g: "", fat_g: "" });
@@ -45,8 +45,6 @@ export default function Food() {
   const [source, setSource] = useState("manual");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [foodId, setFoodId] = useState("");
-  const [qty, setQty] = useState(1);
   const [desc, setDesc] = useState("");
 
   async function load() {
@@ -115,14 +113,6 @@ export default function Food() {
   }
   const sum = (arr, k) => arr.reduce((s, x) => s + Number(x[k] || 0), 0);
   const withRatio = (it) => (it.grams > 0 ? { ...it, per_g: perGram(it, it.grams) } : it);
-
-  // 🥣 Add by portion (no weighing scale needed)
-  function addPortion() {
-    const food = ALL_FOODS.find((f) => f.id === foodId);
-    if (!food || !(Number(qty) > 0)) return;
-    setItems([...items, withRatio(portionItem(food, qty))]);
-    setFoodId(""); setQty(1); setErr("");
-  }
 
   // ✍️ Describe the meal in words and let the AI estimate it
   async function describeMeal(e) {
@@ -204,28 +194,7 @@ export default function Food() {
             </select>
           </div>
         </div>
-        <div className="field">
-          <label>🥣 No weighing scale? Pick a portion</label>
-          <div className="row">
-            <select value={foodId} onChange={(e) => setFoodId(e.target.value)} style={{ flex: "2 1 220px" }}>
-              <option value="">Choose food…</option>
-              {FOOD_GROUPS.map((g) => (
-                <optgroup key={g.group} label={g.group}>
-                  {g.foods.map((f) => <option key={f.id} value={f.id}>{f.name} — per {f.unit}</option>)}
-                </optgroup>
-              ))}
-            </select>
-            <div className="row" style={{ gap: 4, flex: "0 0 auto" }}>
-              <button type="button" className="btn secondary sm" onClick={() => setQty(Math.max(0.5, Number(qty) - 0.5))} aria-label="Less">−</button>
-              <input type="number" inputMode="decimal" min="0.5" step="0.5" value={qty} onChange={(e) => setQty(e.target.value)}
-                style={{ width: 64, textAlign: "center" }} aria-label="How many" />
-              <button type="button" className="btn secondary sm" onClick={() => setQty(Number(qty) + 0.5)} aria-label="More">+</button>
-            </div>
-            <button type="button" className="btn sm" onClick={addPortion} disabled={!foodId}>Add</button>
-          </div>
-          {foodId && (() => { const f = ALL_FOODS.find((x) => x.id === foodId); const it = f && portionItem(f, qty);
-            return it ? <p className="muted small" style={{ margin: "6px 0 0" }}>{it.name}: ~{it.calories} kcal · {it.protein_g} g protein · {it.grams} g</p> : null; })()}
-        </div>
+        <FoodPicker onAdd={(it) => { setItems((prev) => [...prev, withRatio(it)]); setErr(""); }} />
 
         <form className="field" onSubmit={describeMeal}>
           <label>✍️ Or describe what you ate (AI)</label>
