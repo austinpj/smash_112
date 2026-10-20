@@ -27,11 +27,23 @@ export async function POST(request) {
     return NextResponse.json({ error: "Photo analysis isn't set up yet (GEMINI_API_KEY is missing)." }, { status: 500 });
   }
 
-  const { image } = await request.json().catch(() => ({}));
-  const match = typeof image === "string" && image.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
-  if (!match) return NextResponse.json({ error: "No image received." }, { status: 400 });
-  const [, mimeType, data] = match;
-  if (data.length > 4_000_000) return NextResponse.json({ error: "Image is too large." }, { status: 413 });
+  const { image, text: described } = await request.json().catch(() => ({}));
+  let parts;
+  if (typeof described === "string" && described.trim()) {
+    // Meal described in words (no photo, no weighing scale)
+    if (described.length > 600) return NextResponse.json({ error: "Description is too long." }, { status: 400 });
+    parts = [{ text: `${PROMPT}
+Instead of a photo, the user has DESCRIBED the meal in words, often with household measures
+(bowl/katori ≈ 150 g, cup/glass ≈ 150–250 ml, ladle ≈ 60 g, piece, handful ≈ 30 g, tbsp ≈ 15 g).
+Use typical Kerala/Indian home-cooked portions when no size is given.
+Meal description: """${described.trim()}"""` }];
+  } else {
+    const match = typeof image === "string" && image.match(/^data:(image\/[a-z+]+);base64,(.+)$/);
+    if (!match) return NextResponse.json({ error: "No image received." }, { status: 400 });
+    const [, mimeType, data] = match;
+    if (data.length > 4_000_000) return NextResponse.json({ error: "Image is too large." }, { status: 413 });
+    parts = [{ text: PROMPT }, { inline_data: { mime_type: mimeType, data } }];
+  }
 
   const models = [process.env.GEMINI_MODEL, ...MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
   const call = (model, fast) =>
@@ -39,7 +51,7 @@ export async function POST(request) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mimeType, data } }] }],
+        contents: [{ parts }],
         generationConfig: {
           responseMimeType: "application/json",
           ...(fast ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
