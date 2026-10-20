@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { bodyStats, fmt, todayISO } from "@/lib/calc";
+import { FOOD_GROUPS, ALL_FOODS, portionItem } from "@/lib/foods";
 
 const MEALS = ["breakfast", "lunch", "dinner", "snack", "other"];
 const blankItem = () => ({ name: "", grams: "", calories: "", protein_g: "", carbs_g: "", fat_g: "" });
@@ -44,6 +45,9 @@ export default function Food() {
   const [source, setSource] = useState("manual");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [foodId, setFoodId] = useState("");
+  const [qty, setQty] = useState(1);
+  const [desc, setDesc] = useState("");
 
   async function load() {
     const { data } = await supabase.from("food_logs").select("*").eq("eaten_on", day).order("created_at");
@@ -63,7 +67,7 @@ export default function Food() {
   async function onPhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setErr(""); setBusy(true); setItems([]); setNotes("");
+    setErr(""); setBusy(true); setNotes("");
     try {
       const dataUrl = await resizeImage(file);
       setPreview(dataUrl);
@@ -75,7 +79,7 @@ export default function Food() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Analysis failed");
       if (!json.items.length) throw new Error("No food found in the photo. You can add items manually below.");
-      setItems(json.items.map((it) => (it.grams > 0 ? { ...it, per_g: perGram(it, it.grams) } : it)));
+      setItems((prev) => [...prev, ...json.items.map(withRatio)]); // adds to anything already in the meal
       setNotes(json.notes);
       setSource("ai");
     } catch (e) {
@@ -110,6 +114,39 @@ export default function Food() {
     }));
   }
   const sum = (arr, k) => arr.reduce((s, x) => s + Number(x[k] || 0), 0);
+  const withRatio = (it) => (it.grams > 0 ? { ...it, per_g: perGram(it, it.grams) } : it);
+
+  // 🥣 Add by portion (no weighing scale needed)
+  function addPortion() {
+    const food = ALL_FOODS.find((f) => f.id === foodId);
+    if (!food || !(Number(qty) > 0)) return;
+    setItems([...items, withRatio(portionItem(food, qty))]);
+    setFoodId(""); setQty(1); setErr("");
+  }
+
+  // ✍️ Describe the meal in words and let the AI estimate it
+  async function describeMeal(e) {
+    e.preventDefault();
+    if (!desc.trim()) return;
+    setErr(""); setBusy(true);
+    try {
+      const res = await fetch("/api/food/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: desc.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Couldn't estimate that");
+      if (!json.items.length) throw new Error("Couldn't find any food in that description.");
+      setItems([...items, ...json.items.map(withRatio)]);
+      if (json.notes) setNotes(json.notes);
+      setSource("ai"); setDesc("");
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save() {
     setErr("");
@@ -157,7 +194,7 @@ export default function Food() {
         <h2>Add a meal</h2>
         <div className="grid">
           <div className="field">
-            <label>Snap or upload a photo (AI estimates calories)</label>
+            <label>📸 Snap or upload a photo (AI estimates calories)</label>
             <input type="file" accept="image/*" capture="environment" onChange={onPhoto} disabled={busy} />
           </div>
           <div className="field">
@@ -167,7 +204,39 @@ export default function Food() {
             </select>
           </div>
         </div>
-        {busy && <p className="muted">Analysing photo…</p>}
+        <div className="field">
+          <label>🥣 No weighing scale? Pick a portion</label>
+          <div className="row">
+            <select value={foodId} onChange={(e) => setFoodId(e.target.value)} style={{ flex: "2 1 220px" }}>
+              <option value="">Choose food…</option>
+              {FOOD_GROUPS.map((g) => (
+                <optgroup key={g.group} label={g.group}>
+                  {g.foods.map((f) => <option key={f.id} value={f.id}>{f.name} — per {f.unit}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            <div className="row" style={{ gap: 4, flex: "0 0 auto" }}>
+              <button type="button" className="btn secondary sm" onClick={() => setQty(Math.max(0.5, Number(qty) - 0.5))} aria-label="Less">−</button>
+              <input type="number" inputMode="decimal" min="0.5" step="0.5" value={qty} onChange={(e) => setQty(e.target.value)}
+                style={{ width: 64, textAlign: "center" }} aria-label="How many" />
+              <button type="button" className="btn secondary sm" onClick={() => setQty(Number(qty) + 0.5)} aria-label="More">+</button>
+            </div>
+            <button type="button" className="btn sm" onClick={addPortion} disabled={!foodId}>Add</button>
+          </div>
+          {foodId && (() => { const f = ALL_FOODS.find((x) => x.id === foodId); const it = f && portionItem(f, qty);
+            return it ? <p className="muted small" style={{ margin: "6px 0 0" }}>{it.name}: ~{it.calories} kcal · {it.protein_g} g protein · {it.grams} g</p> : null; })()}
+        </div>
+
+        <form className="field" onSubmit={describeMeal}>
+          <label>✍️ Or describe what you ate (AI)</label>
+          <div className="row">
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} disabled={busy}
+              placeholder="e.g. 2 chapathi, 1 bowl chicken curry, 1 glass tea" style={{ flex: "1 1 240px" }} />
+            <button className="btn sm" disabled={busy || !desc.trim()}>Estimate</button>
+          </div>
+        </form>
+
+        {busy && <p className="muted">Analysing…</p>}
         {preview && <img src={preview} alt="Meal" className="preview-img" />}
         {notes && <p className="muted small">AI note: {notes}</p>}
         {err && <p className="error">{err}</p>}
@@ -199,7 +268,7 @@ export default function Food() {
             </>
           )}
         </div>
-        <p className="muted small">Change the <b>grams</b> and calories, protein, carbs &amp; fat update automatically. AI numbers are estimates — check portion sizes before saving.</p>
+        <p className="muted small">Have a weighing scale? Type the exact <b>grams</b> and calories, protein, carbs &amp; fat update automatically. Portion and AI numbers are estimates — adjust before saving.</p>
       </div>
 
       <div className="card table-wrap">
