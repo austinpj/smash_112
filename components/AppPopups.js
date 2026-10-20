@@ -155,10 +155,10 @@ function Onboarding({ profile, weight }) {
                 ))}
               </div>
               <label style={{ marginTop: 14 }}>Your goal</label>
-              <div className="choice-grid three">
+              <div className="choice-grid two">
                 {Object.entries(GOALS).map(([k, v]) => (
                   <button type="button" key={k} className={"choice" + (f.goal === k ? " on" : "")} onClick={() => set("goal", k)}>
-                    <span className="choice-icon">{{ lose: "🔥", maintain: "⚖️", gain: "💪" }[k]}</span>{v.label}
+                    <span className="choice-icon">{v.icon}</span>{v.label}
                   </button>
                 ))}
               </div>
