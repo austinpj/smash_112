@@ -2,6 +2,20 @@
 import { useEffect, useState } from "react";
 
 const KEY = "smash-install-dismissed";
+
+// The browser's "you can install this" event fires only once, very early.
+// We keep it on window so the Profile page's Install button can use it later.
+function rememberPrompt(e) {
+  e.preventDefault();
+  window.__smashInstall = e;
+  window.dispatchEvent(new Event("smash:installable"));
+}
+if (typeof window !== "undefined" && !window.__smashInstallHooked) {
+  window.__smashInstallHooked = true;
+  window.addEventListener("beforeinstallprompt", rememberPrompt);
+  window.addEventListener("appinstalled", () => { window.__smashInstall = null; window.dispatchEvent(new Event("smash:installed")); });
+}
+const isStandalone = () => window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
 const CSS = `
 .install-bar {
   position: fixed; z-index: 40; left: 12px; right: 12px; bottom: 20px;
@@ -27,23 +41,23 @@ export default function InstallApp() {
   const [mode, setMode] = useState(null);     // "prompt" | "ios" | null
 
   useEffect(() => {
-    const standalone = window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone;
     let dismissed = false;
     try { dismissed = localStorage.getItem(KEY) === "1"; } catch {}
-    if (standalone || dismissed) return;
+    if (isStandalone() || dismissed) return;
 
-    const onPrompt = (e) => { e.preventDefault(); setPrompt(e); setMode("prompt"); };
+    const onPrompt = () => { if (window.__smashInstall) { setPrompt(window.__smashInstall); setMode("prompt"); } };
     const onInstalled = () => setMode(null);
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
+    onPrompt();
+    window.addEventListener("smash:installable", onPrompt);
+    window.addEventListener("smash:installed", onInstalled);
 
     // iPhone/iPad Safari has no install button — show instructions instead
     const ua = window.navigator.userAgent;
     if (/iphone|ipad|ipod/i.test(ua)) setMode("ios");
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
+      window.removeEventListener("smash:installable", onPrompt);
+      window.removeEventListener("smash:installed", onInstalled);
     };
   }, []);
 
@@ -58,6 +72,7 @@ export default function InstallApp() {
     const { outcome } = await prompt.userChoice;
     if (outcome === "accepted") setMode(null);
     setPrompt(null);
+    window.__smashInstall = null; // each install event can only be used once
   }
 
   if (!mode) return null;
@@ -78,5 +93,83 @@ export default function InstallApp() {
         <button className="x" onClick={dismiss} aria-label="Not now">×</button>
       </div>
     </>
+  );
+}
+
+// ───────────── Profile page card: install any time ─────────────
+function detectDevice() {
+  const ua = window.navigator.userAgent;
+  if (/FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat/i.test(ua)) return "inapp";
+  if (/iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "ios";
+  if (/SamsungBrowser/i.test(ua)) return "samsung";
+  if (/android/i.test(ua)) return /firefox/i.test(ua) ? "android-firefox" : "android";
+  if (/Edg\//.test(ua)) return "edge";
+  if (/firefox/i.test(ua)) return "firefox";
+  if (/safari/i.test(ua) && !/chrome|chromium/i.test(ua)) return "mac-safari";
+  return "desktop";
+}
+
+const STEPS = {
+  ios: ["Open Smash in Safari (or Chrome on newer iPhones).", "Tap the Share button ⬆️ (bottom or top of the screen).", "Scroll down and tap “Add to Home Screen”, then “Add”."],
+  android: ["Tap the ⋮ menu (top-right in Chrome).", "Tap “Add to Home screen” or “Install app”.", "Tap “Install” / “Add”."],
+  "android-firefox": ["Tap the ⋮ menu.", "Tap “Install” or “Add to Home screen”."],
+  samsung: ["Tap the ≡ menu at the bottom.", "Tap “Add page to” → “Home screen”."],
+  edge: ["Click the ⋯ menu (top-right).", "Go to “Apps” → “Install this site as an app”."],
+  desktop: ["Look for the install icon 🖥️⬇ at the right end of the address bar and click it.", "Or open the ⋮ menu → “Cast, save and share” → “Install page as app”."],
+  "mac-safari": ["Click File (top menu bar) → “Add to Dock”."],
+  firefox: ["Firefox on computers can’t install apps. Open Smash in Chrome or Edge and install from there."],
+  inapp: ["You’re inside another app’s browser (WhatsApp, Instagram…).", "Tap ⋯ / ⋮ and choose “Open in Chrome” or “Open in Safari”, then come back to this page."],
+};
+
+export function InstallSettings() {
+  const [state, setState] = useState("loading"); // loading | installed | ready | manual
+  const [device, setDevice] = useState("desktop");
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    setDevice(detectDevice());
+    const check = () => setState(isStandalone() ? "installed" : window.__smashInstall ? "ready" : "manual");
+    const done = () => { setState("installed"); setMsg("Installed! Look for Smash on your home screen / desktop."); };
+    check();
+    window.addEventListener("smash:installable", check);
+    window.addEventListener("smash:installed", done);
+    return () => { window.removeEventListener("smash:installable", check); window.removeEventListener("smash:installed", done); };
+  }, []);
+
+  async function install() {
+    const e = window.__smashInstall;
+    if (!e) return setState("manual");
+    e.prompt();
+    const { outcome } = await e.userChoice;
+    window.__smashInstall = null;
+    if (outcome === "accepted") { setState("installed"); setMsg("Installed! Look for Smash on your home screen / desktop."); }
+    else setState("manual");
+  }
+
+  if (state === "loading") return null;
+  return (
+    <div className="card">
+      <div className="row between">
+        <h2 style={{ margin: 0 }}>📲 Install app</h2>
+        <span className="pill" style={state === "installed" ? {} : { background: "rgba(255,255,255,.06)", color: "var(--muted)" }}>
+          {state === "installed" ? "Installed" : "Not installed"}
+        </span>
+      </div>
+      <p className="muted small">Put Smash on your home screen so it opens full screen like a normal app — no browser bars, one tap away.</p>
+
+      {state === "installed" && <p className="small" style={{ marginBottom: 0 }}>✅ {msg || "You’re using the installed app."}</p>}
+
+      {state === "ready" && <button className="btn" onClick={install}>Install Smash</button>}
+
+      {state === "manual" && (
+        <>
+          <p className="small" style={{ fontWeight: 700, margin: "0 0 6px" }}>How to install on this device:</p>
+          <ol className="small" style={{ margin: 0, paddingLeft: 20, lineHeight: 1.7 }}>
+            {(STEPS[device] || STEPS.desktop).map((t) => <li key={t}>{t}</li>)}
+          </ol>
+          <p className="muted small" style={{ marginBottom: 0 }}>Already installed? Just open Smash from your home screen or app list.</p>
+        </>
+      )}
+    </div>
   );
 }
