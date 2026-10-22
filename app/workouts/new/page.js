@@ -1,41 +1,13 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { e1rm, setCalories, fmt, todayISO } from "@/lib/calc";
+import { setCalories, fmt, todayISO } from "@/lib/calc";
+import { RepeatCard, PRToast, WORKOUT_CSS, loadHistory, checkPR, bestIncluding, pickHype } from "@/components/WorkoutExtras";
+import ExerciseCard from "@/components/ExerciseCard";
 
 const emptySet = () => ({ reps: "", weight_kg: "", minutes: "", distance_km: "" });
 const DRAFT_KEY = "smash-workout-draft";
-const DRAFT_CSS = `
-/* ───────────── Auto-saved workout bar ───────────── */
-.draft-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 10px 14px; margin: -6px 0 16px;
-  border-radius: 14px; border: 1px solid rgba(198,255,61,.25);
-  background: rgba(198,255,61,.07); color: var(--text); font-size: .9rem;
-}
-.draft-bar > span:nth-child(2) { flex: 1; }
-.draft-bar.resume { margin-top: 0; }
-.draft-bar.resume:hover { opacity: 1; border-color: var(--accent); }
-.draft-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
-.repeat-suggest {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: left;
-  padding: 14px 16px; margin-bottom: 12px; border-radius: 14px; cursor: pointer; font: inherit; color: var(--text);
-  border: 1.5px solid var(--accent); background: rgba(198,255,61,.08); box-shadow: 0 0 24px -12px rgba(198,255,61,.7);
-  transition: transform .2s;
-}
-.repeat-suggest b { font-size: 1.1rem; }
-.repeat-suggest:hover { transform: translateY(-2px); }
-.repeat-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); margin-bottom: 10px; }
-.repeat-chip {
-  display: flex; align-items: center; gap: 8px; text-align: left; padding: 10px 12px; border-radius: 12px; cursor: pointer;
-  font: inherit; color: var(--text); border: 1px solid var(--line); background: rgba(255,255,255,.03); transition: border-color .2s, transform .2s;
-}
-.repeat-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
-.repeat-chip .rc-title { flex: 1; font-weight: 650; font-size: .9rem; }
-.new-ex { margin-top: 12px; padding: 14px; border-radius: 14px; border: 1px dashed rgba(198,255,61,.3); animation: rise .3s var(--ease) both; }
-`;
 
 const GROUPS = ["Chest","Back","Shoulders","Biceps","Triceps","Forearms","Legs","Quads","Hamstrings","Glutes","Calves","Core","Full body","Cardio","Flexibility"];
 
@@ -61,6 +33,16 @@ export default function NewWorkout() {
   const [showNewEx, setShowNewEx] = useState(false);
   const [newEx, setNewEx] = useState({ name: "", muscle_group: "Chest", equipment: "", category: "strength" });
   const [recent, setRecent] = useState([]); // workouts from the last 2 weeks, for "Repeat a workout"
+  const [pr, setPr] = useState(null); // the PR celebration popup
+  const celebrated = useRef(new Set());
+  const closePr = useCallback(() => setPr(null), []);
+
+  // Fill in "last time" (most recent session of each exercise, any day) and all-time bests
+  async function refreshHistory(list, onDate) {
+    const ids = [...new Set(list.map((e) => e.exercise.id))];
+    const h = await loadHistory(supabase, ids, onDate || todayISO());
+    setEntries((cur) => cur.map((e) => (h[e.exercise.id] ? { ...e, last: h[e.exercise.id].last || e.last, best: h[e.exercise.id].best } : e)));
+  }
 
   // ── Load any workout-in-progress saved on this device ──
   useEffect(() => {
@@ -73,10 +55,12 @@ export default function NewWorkout() {
         if (d && d.userId === uid && d.entries?.length) {
           setTitle(d.title || ""); setDate(d.date || todayISO()); setDuration(d.duration || "");
           setNotes(d.notes || ""); setEntries(d.entries); setResumed(true); setSavedAt(d.savedAt);
+          refreshHistory(d.entries, d.date);
         }
       } catch {}
       setDraftReady(true);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase]);
 
   // ── Auto-save on every change ──
@@ -104,7 +88,7 @@ export default function NewWorkout() {
       .insert({ ...newEx, name: newEx.name.trim(), met, user_id: userId }).select().single();
     if (error) return setErr(error.message);
     setExercises([...exercises, data].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group) || a.name.localeCompare(b.name)));
-    setEntries([...entries, { exercise: data, sets: [emptySet()], last: null }]);
+    setEntries([...entries, { exercise: data, sets: [emptySet()], last: null, best: null }]);
     setNewEx({ ...newEx, name: "", equipment: "" });
     setShowNewEx(false);
   }
@@ -130,7 +114,7 @@ export default function NewWorkout() {
     })();
   }, [supabase]);
 
-  // Load a previous workout: same exercises, same order, same number of sets (boxes left empty to fill in)
+  // Load a previous workout: same exercises, same order, same number of sets (boxes left empty)
   function repeatWorkout(w) {
     const sets = [...w.workout_sets].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.set_number - b.set_number);
     const groups = [];
@@ -140,12 +124,15 @@ export default function NewWorkout() {
       if (!g) groups.push((g = { exercise: st.exercises, prev: [] }));
       g.prev.push(st);
     });
-    setEntries(groups.map((g) => ({
+    const list = groups.map((g) => ({
       exercise: g.exercise,
       last: { date: w.performed_on, sets: g.prev },
+      best: null,
       sets: g.prev.map(() => emptySet()), // same number of sets, empty boxes to fill in today
-    })));
+    }));
+    setEntries(list);
     setTitle(w.title || "");
+    refreshHistory(list, date);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -157,20 +144,10 @@ export default function NewWorkout() {
   async function addExercise() {
     const ex = exercises.find((e) => e.id === picked);
     if (!ex) return;
-    // Fetch the most recent session for this exercise to show "last time"
-    const { data: prev } = await supabase
-      .from("workout_sets")
-      .select("reps, weight_kg, duration_sec, distance_km, workout_id, workouts(performed_on)")
-      .eq("exercise_id", ex.id)
-      .order("created_at", { ascending: false })
-      .limit(20);
-    let last = null;
-    if (prev && prev.length) {
-      const wid = prev[0].workout_id;
-      last = { date: prev[0].workouts?.performed_on, sets: prev.filter((p) => p.workout_id === wid).reverse() };
-    }
-    setEntries([...entries, { exercise: ex, sets: [emptySet()], last }]);
     setPicked("");
+    // The most recent time you did this exercise (any day) + your all-time best, for PRs
+    const h = (await loadHistory(supabase, [ex.id], date))[ex.id] || {};
+    setEntries((cur) => [...cur, { exercise: ex, sets: [emptySet()], last: h.last || null, best: h.best || null }]);
   }
 
   function updateSet(i, j, field, value) {
@@ -179,6 +156,18 @@ export default function NewWorkout() {
     );
     setEntries(next);
   }
+  // When you finish typing a set, check if it beats your best ever → celebrate!
+  function celebrate(i, j) {
+    const e = entries[i];
+    if (!e || e.exercise.category === "cardio") return;
+    const s = e.sets[j];
+    const res = checkPR(bestIncluding(e.best, e.sets, j), s);
+    const key = `${e.exercise.id}|${j}|${s.reps}|${s.weight_kg}`;
+    if (!res || celebrated.current.has(key)) return;
+    celebrated.current.add(key);
+    setPr({ ...pickHype(), ...res, exercise: e.exercise.name });
+  }
+
   function addSet(i) {
     setEntries(entries.map((e, ei) => (ei !== i ? e : { ...e, sets: [...e.sets, emptySet()] })));
   }
@@ -206,6 +195,8 @@ export default function NewWorkout() {
     },
     { sets: 0, volume: 0, kcal: 0 }
   );
+
+  const prExercises = entries.filter((e) => e.exercise.category !== "cardio" && e.sets.some((s) => checkPR(e.best, s))).length;
 
   async function save() {
     setErr("");
@@ -242,7 +233,8 @@ export default function NewWorkout() {
 
   return (
     <>
-      <style>{DRAFT_CSS}</style>
+      <style>{WORKOUT_CSS}</style>
+      <PRToast pr={pr} onClose={closePr} />
       <h1>Log a workout</h1>
       {(entries.length > 0 || title) && (
         <div className="draft-bar">
@@ -328,58 +320,19 @@ export default function NewWorkout() {
         )}
       </div>
 
-      {entries.map((e, i) => {
-        const cardio = e.exercise.category === "cardio";
-        const best = Math.max(0, ...e.sets.map((s) => e1rm(s.weight_kg, s.reps)));
-        return (
-          <div className="card" key={i}>
-            <div className="row between">
-              <div>
-                <b>{e.exercise.name}</b> <span className="pill">{e.exercise.muscle_group}</span>
-              </div>
-              <button className="btn danger sm" onClick={() => removeEntry(i)}>Remove</button>
-            </div>
-            {e.last && (
-              <p className="muted small">
-                Last time ({e.last.date}):{" "}
-                {e.last.sets.map((s) => cardio
-                  ? `${fmt((s.duration_sec || 0) / 60)} min${s.distance_km ? ` / ${s.distance_km} km` : ""}`
-                  : `${s.reps ?? "-"}×${s.weight_kg ?? 0}kg`).join(", ")}
-              </p>
-            )}
-            <div className="set-grid muted small" style={{ gridTemplateColumns: "32px 1fr 1fr 32px", marginTop: 8 }}>
-              <span>Set</span><span>{cardio ? "Minutes" : "Reps"}</span><span>{cardio ? "Distance (km)" : "Weight (kg)"}</span><span />
-            </div>
-            {e.sets.map((s, j) => (
-              <div className="set-grid" key={j} style={{ gridTemplateColumns: "32px 1fr 1fr 32px" }}>
-                <span className="muted">{j + 1}</span>
-                {cardio ? (
-                  <>
-                    <input type="number" inputMode="decimal" value={s.minutes} onChange={(ev) => updateSet(i, j, "minutes", ev.target.value)} />
-                    <input type="number" inputMode="decimal" value={s.distance_km} onChange={(ev) => updateSet(i, j, "distance_km", ev.target.value)} />
-                  </>
-                ) : (
-                  <>
-                    <input type="number" inputMode="numeric" value={s.reps} onChange={(ev) => updateSet(i, j, "reps", ev.target.value)} />
-                    <input type="number" inputMode="decimal" step="0.5" value={s.weight_kg} onChange={(ev) => updateSet(i, j, "weight_kg", ev.target.value)} />
-                  </>
-                )}
-                <button className="btn secondary sm" onClick={() => removeSet(i, j)} aria-label="Remove set">×</button>
-              </div>
-            ))}
-            <div className="row between">
-              <button className="btn secondary sm" onClick={() => addSet(i)}>+ Add set</button>
-              {!cardio && best > 0 && <span className="muted small">Est. 1-rep max: {fmt(best, 1)} kg</span>}
-            </div>
-          </div>
-        );
-      })}
+      {entries.map((e, i) => (
+        <ExerciseCard key={i} e={e} onRemove={() => removeEntry(i)} onAddSet={() => addSet(i)}
+          onSet={(j, field, v) => updateSet(i, j, field, v)} onRemoveSet={(j) => removeSet(i, j)} onDone={(j) => celebrate(i, j)} />
+      ))}
 
       <div className="card">
         <div className="field">
           <label>Notes</label>
           <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
+        {prExercises > 0 && (
+          <p style={{ margin: "0 0 8px", fontWeight: 800, color: "#facc15" }}>🏆 New personal record{prExercises > 1 ? `s in ${prExercises} exercises` : ""} today — great work!</p>
+        )}
         <p className="muted small">
           {summary.sets} sets · {fmt(summary.volume)} kg volume
           {weight ? ` · ~${fmt(summary.kcal)} kcal burned (estimate)` : " · add your weight in Profile to estimate calories burned"}
@@ -388,44 +341,5 @@ export default function NewWorkout() {
         <button className="btn" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save workout"}</button>
       </div>
     </>
-  );
-}
-
-// ───────────── "Repeat a workout" card ─────────────
-const DAY = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short" });
-const DAY_LONG = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { weekday: "long" });
-const SHORT = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-
-function RepeatCard({ recent, onPick }) {
-  const todayName = new Date().toLocaleDateString("en-IN", { weekday: "long" });
-  // Same weekday as today, most recent first (e.g. last Monday's workout on a Monday)
-  const suggested = recent.find((w) => DAY_LONG(w.performed_on) === todayName && w.performed_on !== todayISO());
-  const label = (w) => w.title || "Workout";
-  const count = (w) => new Set(w.workout_sets.map((s) => s.exercise_id)).size;
-
-  return (
-    <div className="card">
-      <h2>🔁 Repeat a workout</h2>
-      <p className="muted small" style={{ marginTop: -6 }}>
-        Pick one you did recently — its exercises load in the same order with the same number of sets. Just fill in today’s reps and weights.
-      </p>
-      {suggested && (
-        <button className="repeat-suggest" onClick={() => onPick(suggested)}>
-          <span className="muted small">Today is {todayName} · last {todayName} you did</span>
-          <b>{label(suggested)}</b>
-          <span className="muted small">{count(suggested)} exercises · {suggested.workout_sets.length} sets — tap to load</span>
-        </button>
-      )}
-      <div className="repeat-list">
-        {recent.filter((w) => w !== suggested).map((w) => (
-          <button key={w.id} className="repeat-chip" onClick={() => onPick(w)}>
-            <span className="pill">{DAY(w.performed_on)}</span>
-            <span className="rc-title">{label(w)}</span>
-            <span className="muted small">{SHORT(w.performed_on)} · {count(w)} ex</span>
-          </button>
-        ))}
-      </div>
-      <p className="muted small" style={{ marginBottom: 0 }}>Doing something different today? Skip this and add exercises below.</p>
-    </div>
   );
 }
