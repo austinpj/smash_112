@@ -2,7 +2,7 @@
 import { e1rm, fmt } from "@/lib/calc";
 import { checkPR } from "@/components/WorkoutExtras";
 
-// One exercise in the workout: "last time" line, set boxes (with last time's numbers as hints) and PR badges
+// One exercise in the workout: your best ever, set boxes (last time's numbers as faint hints) and PR badges
 export default function ExerciseCard({ e, onRemove, onAddSet, onSet, onRemoveSet, onDone }) {
   const cardio = e.exercise.category === "cardio";
   const best = Math.max(0, ...e.sets.map((s) => e1rm(s.weight_kg, s.reps)));
@@ -14,17 +14,8 @@ export default function ExerciseCard({ e, onRemove, onAddSet, onSet, onRemoveSet
         </div>
         <button className="btn danger sm" onClick={onRemove}>Remove</button>
       </div>
-      {e.last ? (
-        <div className="last-time">
-          <span className="muted">Last time · {new Date(e.last.date + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}: </span>
-          <b>{e.last.sets.map((s) => cardio
-            ? `${fmt((s.duration_sec || 0) / 60)} min${s.distance_km ? ` / ${s.distance_km} km` : ""}`
-            : `${s.reps ?? "-"}×${s.weight_kg ?? 0}kg`).join(", ")}</b>
-          {!cardio && e.best?.weight > 0 && <span className="muted"> · best ever {fmt(e.best.weight, 1)} kg</span>}
-        </div>
-      ) : (
-        <p className="muted small">First time logging this one — today sets your baseline 💪</p>
-      )}
+      {!e.best && !e.last && <p className="muted small">First time logging this one — today sets your baseline 💪</p>}
+      {!cardio && <BestEver best={e.best} />}
       <div className="set-grid muted small" style={{ gridTemplateColumns: "32px 1fr 1fr 32px", marginTop: 8 }}>
         <span>Set</span><span>{cardio ? "Minutes" : "Reps"}</span><span>{cardio ? "Distance (km)" : "Weight (kg)"}</span><span />
       </div>
@@ -57,4 +48,39 @@ export default function ExerciseCard({ e, onRemove, onAddSet, onSet, onRemoveSet
       </div>
     </div>
   );
+}
+
+const nice = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+
+// Your all-time best for this exercise + what to hit next time to beat it
+function BestEver({ best }) {
+  if (!best) return null;
+  const h = best.heavySet, s = best.strongSet, r = best.repSet;
+  if (h) {
+    const sameSet = s && s.weight === h.weight && s.reps === h.reps;
+    // Fewest reps at your best weight that would beat your strongest set (= a new PR)
+    let need = (h.reps || 0) + 1;
+    while (need < 50 && e1rm(h.weight, need) <= best.e1rm + 0.05) need++;
+    return (
+      <div className="best-ever">
+        🏆 <span className="muted">Best ever:</span> <b>{fmt(h.weight, 1)} kg × {h.reps || "-"}</b>
+        <span className="muted"> ({nice(h.date)})</span>
+        {s && !sameSet && (
+          <span className="muted"> · strongest set <b>{s.reps}×{fmt(s.weight, 1)} kg</b> ({nice(s.date)})</span>
+        )}
+        <span className="beat muted small">
+          🎯 To beat it: <b>{fmt(h.weight, 1)} kg × {need}</b> or <b>{fmt(h.weight + 2.5, 1)} kg × {Math.max(1, h.reps || 1)}</b>
+        </span>
+      </div>
+    );
+  }
+  if (r) {
+    return (
+      <div className="best-ever">
+        🏆 <span className="muted">Best ever:</span> <b>{r.reps} reps</b><span className="muted"> ({nice(r.date)})</span>
+        <span className="beat muted small">🎯 To beat it: <b>{r.reps + 1} reps</b></span>
+      </div>
+    );
+  }
+  return null;
 }
