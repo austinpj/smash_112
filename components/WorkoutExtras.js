@@ -23,12 +23,14 @@ export async function loadHistory(supabase, ids, date) {
       date: rows[0].workouts.performed_on,
       sets: rows.filter((r) => r.workout_id === wid).sort((a, b) => (a.set_number || 0) - (b.set_number || 0)),
     };
-    const best = { weight: 0, e1rm: 0, reps: 0 };
+    // Bests, plus WHICH set and WHEN, so the card can show "Best ever: 62.5 kg × 8 (Mon 20 Oct)"
+    const best = { weight: 0, e1rm: 0, reps: 0, heavySet: null, strongSet: null, repSet: null };
     for (const r of rows) {
       const w = Number(r.weight_kg) || 0, n = Number(r.reps) || 0;
-      if (w > best.weight) best.weight = w;
-      if (w > 0 && n > 0) best.e1rm = Math.max(best.e1rm, e1rm(w, n));
-      if (!w && n > best.reps) best.reps = n;
+      const info = { weight: w, reps: n, date: r.workouts.performed_on };
+      if (w > 0 && (w > best.weight || (w === best.weight && n > (best.heavySet?.reps || 0)))) { best.weight = w; best.heavySet = info; }
+      if (w > 0 && n > 0 && e1rm(w, n) > best.e1rm) { best.e1rm = e1rm(w, n); best.strongSet = info; }
+      if (!w && n > best.reps) { best.reps = n; best.repSet = info; }
     }
     out[id] = { last, best };
   }
@@ -195,6 +197,10 @@ export const WORKOUT_CSS = `
 .new-ex { margin-top: 12px; padding: 14px; border-radius: 14px; border: 1px dashed rgba(198,255,61,.3); animation: rise .3s var(--ease) both; }
 .last-time { margin: 8px 0 4px; padding: 8px 12px; border-radius: 12px; background: rgba(46,242,196,.07); border: 1px solid rgba(46,242,196,.2); font-size: .85rem; }
 .last-time b { color: var(--accent-2); }
+.best-ever { margin: 6px 0 4px; padding: 8px 12px; border-radius: 12px; font-size: .85rem;
+  background: rgba(250,204,21,.07); border: 1px solid rgba(250,204,21,.28); }
+.best-ever b { color: #facc15; }
+.best-ever .beat { display: block; margin-top: 2px; }
 .pr-badge { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 99px; font-size: .68rem; font-weight: 800;
   color: #07080c; background: linear-gradient(90deg, #facc15, var(--accent)); animation: prPop .5s var(--ease) both; }
 .set-pr input { border-color: #facc15 !important; box-shadow: 0 0 12px -4px #facc15; }
