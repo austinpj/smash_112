@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import FrogPond from "@/components/FrogPond";
+import DayPicker, { dayLabel } from "@/components/DayPicker";
 
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
@@ -21,6 +22,7 @@ export default function WaterPage() {
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [logDay, setLogDay] = useState(() => iso(new Date())); // which day you're adding water to
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
 
@@ -53,13 +55,18 @@ export default function WaterPage() {
   const night = now.getHours() >= 19 || now.getHours() < 5;
   const hoursLeft = 24 - now.getHours();
   const left = Math.max(0, goal - s.todayMl);
+  // The day you're adding to (today, or a past day you forgot to log)
+  const isToday = logDay === today;
+  const dayRows = logs.filter((r) => r.day === logDay);
+  const dayMl = dayRows.reduce((t, r) => t + r.ml, 0);
+  const dayPct = Math.min(1, dayMl / goal);
   const name = `${frog}${s.generation > 1 ? ` #${s.generation}` : ""}`;
 
   async function add(ml) {
     ml = Math.round(Number(ml));
     if (!(ml > 0 && ml <= 3000)) return setErr("Enter between 1 and 3000 ml.");
     setErr(""); setBusy(true);
-    const { data, error } = await createClient().from("water_logs").insert({ day: today, ml }).select("id, day, ml, created_at").single();
+    const { data, error } = await createClient().from("water_logs").insert({ day: logDay, ml }).select("id, day, ml, created_at").single();
     setBusy(false);
     if (error) return setErr(error.message);
     setLogs((x) => [...x, data]);
@@ -130,16 +137,18 @@ export default function WaterPage() {
       </div>
 
       <div className="card">
+        <DayPicker value={logDay} onChange={setLogDay} label="Adding water for" />
         <div className="row between" style={{ alignItems: "baseline" }}>
-          <div><span style={{ fontSize: "2rem", fontWeight: 800, letterSpacing: "-.03em" }}>{L(s.todayMl)}</span>
-            <span className="muted"> / {L(goal)} L</span></div>
-          <b style={{ color: pct >= 1 ? "var(--accent)" : "var(--text)" }}>{Math.round(pct * 100)}%</b>
+          <div><span style={{ fontSize: "2rem", fontWeight: 800, letterSpacing: "-.03em" }}>{L(dayMl)}</span>
+            <span className="muted"> / {L(goal)} L {isToday ? "" : dayLabel(logDay)}</span></div>
+          <b style={{ color: dayPct >= 1 ? "var(--accent)" : "var(--text)" }}>{Math.round(dayPct * 100)}%</b>
         </div>
-        <div className="water-bar"><span style={{ width: `${pct * 100}%` }} /></div>
-        {pct < 1 && now.getHours() >= 18 && (
+        <div className="water-bar"><span style={{ width: `${dayPct * 100}%` }} /></div>
+        {isToday && pct < 1 && now.getHours() >= 18 && (
           <p className="error" style={{ marginBottom: 0 }}>⏰ {name} dies at midnight unless you drink {L(left)} L more ({hoursLeft} h left).</p>
         )}
-        {pct >= 1 && <p style={{ color: "var(--accent)", margin: "8px 0 0", fontWeight: 700 }}>✅ Goal done — {name} is safe tonight!</p>}
+        {isToday && pct >= 1 && <p style={{ color: "var(--accent)", margin: "8px 0 0", fontWeight: 700 }}>✅ Goal done — {name} is safe tonight!</p>}
+        {!isToday && dayPct >= 1 && <p style={{ color: "var(--accent)", margin: "8px 0 0", fontWeight: 700 }}>✅ Goal reached for {dayLabel(logDay)} — no frog lost that day 🐸</p>}
 
         <div className="water-quick">
           {QUICK.map(([ml, label, icon]) => (
@@ -162,10 +171,11 @@ export default function WaterPage() {
       </div>
 
       <div className="card">
-        <b>Last 7 days</b>
+        <b>Last 7 days</b> <span className="muted small">· tap a day to add or fix its water</span>
         <div className="water-week">
           {s.week.map((d) => (
-            <div key={d.day} className={"ww" + (d.day === today ? " today" : "")}>
+            <div key={d.day} role="button" tabIndex={0} onClick={() => setLogDay(d.day)}
+              className={"ww" + (d.day === today ? " today" : "") + (d.day === logDay ? " sel" : "")}>
               <div style={{ fontSize: "1.3rem" }}>{d.icon}</div>
               <div className="small" style={{ fontWeight: 700 }}>{d.ml ? L(d.ml) : "–"}</div>
               <div className="muted small">{d.label}</div>
@@ -174,10 +184,10 @@ export default function WaterPage() {
         </div>
       </div>
 
-      {s.todayRows.length > 0 && (
+      {dayRows.length > 0 && (
         <div className="card">
-          <b>Today's drinks</b>
-          {s.todayRows.slice().reverse().map((r) => (
+          <b>Drinks {isToday ? "today" : dayLabel(logDay)}</b>
+          {dayRows.slice().reverse().map((r) => (
             <div key={r.id} className="row between" style={{ padding: "8px 0", borderBottom: "1px solid var(--line)" }}>
               <span>💧 {r.ml} ml <span className="muted small">· {new Date(r.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span></span>
               <button className="btn secondary sm" onClick={() => remove(r.id)} aria-label="Delete">✕</button>
@@ -274,6 +284,8 @@ const CSS = `
 .water-btn b { font-size: .8rem; }
 .water-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; text-align: center; }
 .ww { padding: 8px 2px; border-radius: 12px; background: rgba(255,255,255,.03); }
+.ww { cursor: pointer; }
 .ww.today { outline: 1px solid var(--accent); }
+.ww.sel { background: rgba(198,255,61,.14); }
 @media (max-width: 420px) { .water-quick { grid-template-columns: repeat(2, 1fr); } }
 `;
