@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { setCalories, fmt, todayISO } from "@/lib/calc";
 import { RepeatCard, PRToast, WORKOUT_CSS, loadHistory, checkPR, bestIncluding, pickHype } from "@/components/WorkoutExtras";
 import ExerciseCard from "@/components/ExerciseCard";
+import useDragReorder from "@/components/useDragReorder";
 
 const emptySet = () => ({ reps: "", weight_kg: "", minutes: "", distance_km: "" });
 const DRAFT_KEY = "smash-workout-draft";
@@ -174,6 +175,8 @@ export default function NewWorkout() {
   function removeSet(i, j) {
     setEntries(entries.map((e, ei) => (ei !== i ? e : { ...e, sets: e.sets.filter((_, sj) => sj !== j) })));
   }
+  // Move exercises: hold the ⋮⋮ handle and drag, or tap the number and pick a position
+  const { dragIndex, startDrag, moveTo } = useDragReorder(setEntries);
   function removeEntry(i) {
     setEntries(entries.filter((_, ei) => ei !== i));
   }
@@ -219,6 +222,9 @@ export default function NewWorkout() {
           .map((s, j) => ({ workout_id: workout.id, exercise_id: e.exercise.id, set_number: j + 1, ...toRow(s, e.exercise) }))
           .filter((r) => r.reps || r.weight_kg || r.duration_sec || r.distance_km)
       );
+      // Save each set 1 ms apart so the exercise order you chose is kept (for "Repeat a workout" too)
+      const base = Date.now();
+      rows.forEach((r, k) => { r.created_at = new Date(base + k).toISOString(); });
       if (rows.length) {
         const { error: e2 } = await supabase.from("workout_sets").insert(rows);
         if (e2) throw e2;
@@ -321,7 +327,9 @@ export default function NewWorkout() {
       </div>
 
       {entries.map((e, i) => (
-        <ExerciseCard key={i} e={e} onRemove={() => removeEntry(i)} onAddSet={() => addSet(i)}
+        <ExerciseCard key={i} e={e} n={i + 1} total={entries.length} onMoveTo={(k) => moveTo(i, k)}
+          dragging={dragIndex === i} onDragStart={(ev) => startDrag(i, ev)}
+          onRemove={() => removeEntry(i)} onAddSet={() => addSet(i)}
           onSet={(j, field, v) => updateSet(i, j, field, v)} onRemoveSet={(j) => removeSet(i, j)} onDone={(j) => celebrate(i, j)} />
       ))}
 
